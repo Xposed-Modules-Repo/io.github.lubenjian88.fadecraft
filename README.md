@@ -4,12 +4,17 @@
 
 这个模块接管系统熄屏的最后一帧：先实时截一张当前画面，再把它拆成碎片、像素、灰烬或者微粒，播完一段动画之后才交给系统真正睡眠。
 
-> ⚠️ **安装或更新本模块后，必须「整机重启手机」才能生效（当前版本 1.0.4）。** 应用内的「重启作用域」只会重启 SystemUI 和系统设置，**碰不到 system_server**——而拦截电源键、触发动画的核心逻辑正好在 system_server 里。所以只点「重启作用域」时，电源键动画不会出现；请直接重启手机。
+> ⚠️ **安装或更新本模块后，必须「整机重启手机」才能生效（当前版本 1.0.5）。** 应用内的「重启作用域」只会重启 SystemUI 和系统设置，**碰不到 system_server**——而拦截电源键、触发动画的核心逻辑正好在 system_server 里。所以只点「重启作用域」时，电源键动画不会出现；请直接重启手机。
 
 - 8 种特效，颗粒大小、时长等参数可调
 - 播放过程没有常驻服务，不做后台轮询
 - 注入**系统框架（system_server）、SystemUI、系统设置**三个进程；电源键拦截发生在 system_server，所以更新后必须**整机重启**才会生效
 - 出问题时设置页最底部可以一键**导出日志**（不需要 root），比截图管用
+
+> **1.0.5 抓帧换了实现**：不再建镜像虚拟屏，改为向 WindowManager 直接要一帧
+> （`IWindowManager.captureDisplay`），Android 16/17 上不受 `ADD_MIRROR_DISPLAY` /
+> `CAPTURE_VIDEO_OUTPUT` 权限收紧的影响，抓帧从 ~85ms 降到 ~30ms，同时修掉了
+> 「动画播完闪一下壁纸才黑屏」。
 
 ## 特效
 
@@ -85,6 +90,20 @@
 
 先在模块设置页点一次「预览」。预览也不播，说明 LSPosed 作用域没勾「SystemUI」，或者装完模块没有重启作用域（点右上角刷新图标，或重启手机）。
 
+**动画播了，但画面是暗色渐变、看不见屏幕内容**
+
+这是**没抓到帧**，动画退回了兜底画面。1.0.4 及更早版本在 Xiaomi 17 / HyperOS 4（Android 17）上会稳定出现，原因是 ROM 把 system 进程的镜像抓屏权限（`ADD_MIRROR_DISPLAY` / `CAPTURE_VIDEO_OUTPUT`）收回了，建镜像虚拟屏一律抛 `SecurityException`。
+**1.0.5 已修复**：改用 `IWindowManager.captureDisplay` 直接向 WindowManager 要一帧，不建虚拟屏、不碰那几个权限。更新后日志里应该是：
+
+```
+capture via IWindowManager 1220x2656 in 29ms mean=238
+```
+
+**动画播完会闪一下壁纸才黑屏**
+
+1.0.4 及更早版本：播完后按固定延时撤黑帧，但系统从「开始灭屏」到「面板真正断电」要 400~600ms，中间就把锁屏壁纸露出来了。
+**1.0.5 已修复**：改成轮询 `Display.getState()`，一直盖到状态真的变成 `OFF`；万一这次压根没熄屏，会淡出而不是硬切。
+
 **动画播到一半黑屏**
 
 通常是时长参数拉得太长、超过了系统兜底睡眠的时间。把时长调回 1 秒以内。
@@ -122,9 +141,9 @@ E/LSPosedFramework: The Xposed API classes are compiled into the module's APK.
 
 ### 已验证（开发机）
 
-- **机型**：Xiaomi 13（代号 fuxi，型号 2211133C）
-- **系统**：Xiaomi HyperOS 4.0.5.0（**Android 17 / API 37**）
-- **Root 方案**：Magisk + LSPosed
+- **Xiaomi 13**（代号 fuxi，型号 2211133C）｜HyperOS 4.0.5.0（**Android 17 / API 37**）｜KernelSU + LSPosed 2.2.1
+- **Xiaomi 17**（代号 popsicle，型号 2509FPN0BC）｜HyperOS 4.0.0.43（**Android 17 / API 37**）｜LSPosed 2.2.1
+  - 这台是抓帧问题最严重的机器：1.0.4 及更早版本五条抓帧路径全灭，只能播兜底暗色；**1.0.5 起正常**。
 
 ### 系统要求
 
